@@ -1,0 +1,106 @@
+service: backend-pdf2qa-validation-service
+frameworkVersion: "3"
+useDotenv: true
+
+plugins:
+  - serverless-better-credentials
+  - serverless-offline
+  - serverless-esbuild
+  - serverless-plugin-test-helper
+  - serverless-step-functions
+  # NOTE: uncomment when certificate is ready in https://eu-west-2.console.aws.amazon.com/acm
+  # - serverless-domain-manager
+
+package:
+  patterns:
+    - "!node_modules/**"
+    - "!src/**"
+    - "!terraform/**"
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: ${opt:stage, 'dev'}
+  profile: pdf2qa-validation-api-user
+  region: eu-west-2
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action: 'states:StartExecution'
+          Resource: '*' # ideally want to point to the PdfValidationStateMachine only
+
+custom:
+  stage: ${opt:stage, 'dev'}
+  serverless-offline:
+    httpPort: 4000
+  dotenv:
+    dotenv_path: .env.${opt:stage, 'dev'}
+  esbuild:
+    exclude: []
+  validationBucketName: pdf2qa-convertor-validation-bucket
+  # NOTE: uncomment when certificate is ready in https://eu-west-2.console.aws.amazon.com/acm
+  # customDomain:
+  #   domainName: ${env:ROUTE_53_DOMAIN_NAME}
+  #   basePath: ''
+  #   stage: ${self:provider.stage}
+  #   createRoute53Record: true
+
+resources:
+  Outputs:
+    PdfValidationStateMachineArn:
+      Description: The ARN of the PDF Validation State Machine
+      Value:
+        Ref: PdfValidationStateMachine
+
+functions:
+  authorizer:
+    handler: ./src/lambda/authorizer.handler
+    environment:
+      AUTHO_RS256_PUBLIC_KEY: ${env:AUTHO_RS256_PUBLIC_KEY}
+    events:
+      - http:
+          path: /authorizer
+          method: post
+          cors: true
+  generatePresignedUrl:
+    handler: ./src/lambda/generatePresignedUrl.handler
+    events:
+      - http:
+          path: /generate-presigned-url
+          method: post
+          cors: true
+          authorizer:
+            name: authorizer
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: token
+    environment:
+      VALIDATION_BUCKET_NAME: ${self:custom.validationBucketName}
+  triggerPdfValidation:
+    handler: ./src/lambda/triggerPdfValidation.handler
+    events:
+      - s3:
+          bucket: ${self:custom.validationBucketName}
+          event: s3:ObjectCreated:*
+          existing: true
+    environment:
+      PDF_VALIDATION_STATE_MACHINE_ARN: ${self:resources.Outputs.PdfValidationStateMachineArn.Value}
+  checkForMalware:
+    handler: ./src/lambda/checkForMalware.handler
+
+stepFunctions:
+  stateMachines:
+    PdfValidationStateMachine:
+      id: PdfValidationStateMachine
+      definition:
+        Comment: "PDF validation state machine"
+        StartAt: CheckForMalware
+        States:
+          CheckForMalware:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [checkForMalware, Arn]
+            End: true
+        TimeoutSeconds: 300
+
