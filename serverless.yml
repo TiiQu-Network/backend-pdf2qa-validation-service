@@ -21,13 +21,13 @@ provider:
   name: aws
   runtime: nodejs18.x
   stage: ${opt:stage, 'dev'}
-  profile: pdf2qa-validation-api-user
+  profile: backend-pdf2qa-validation-service-deploy
   region: eu-west-2
   iam:
     role:
       statements:
         - Effect: Allow
-          Action: 'states:StartExecution'
+          Action: [ 'states:StartExecution', 'SNS:*' ]
           Resource: '*' # ideally want to point to the PdfValidationStateMachine only
 
 custom:
@@ -80,12 +80,20 @@ functions:
   triggerPdfValidation:
     handler: ./src/lambda/triggerPdfValidation.handler
     events:
-      - s3:
-          bucket: ${self:custom.validationBucketName}
-          event: s3:ObjectCreated:*
-          existing: true
+      - sqs:
+          arn: arn:aws:sqs:${env:AWS_REGION}:${env:AWS_ACCOUNT_ID}:${env:PDF_VALIDATION_QUEUE_NAME}
+          batchSize: 1
     environment:
       PDF_VALIDATION_STATE_MACHINE_ARN: ${self:resources.Outputs.PdfValidationStateMachineArn.Value}
+  pubValidationMsg:
+      handler: ./src/lambda/pubValidationMsg.handler
+      events:
+        - s3:
+            bucket: ${self:custom.validationBucketName}
+            event: s3:ObjectCreated:*
+            existing: true
+      environment:
+        PDF_VALIDATION_TOPIC_ARN: ${env:PDF_VALIDATION_TOPIC_ARN}    
   checkForMalware:
     handler: ./src/lambda/checkForMalware.handler
 

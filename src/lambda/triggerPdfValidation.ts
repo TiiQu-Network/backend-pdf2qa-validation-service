@@ -1,23 +1,21 @@
 
-import { S3CreateEvent } from "aws-lambda";
+import { SQSEvent } from "aws-lambda";
 import AWS from 'aws-sdk';
 
 export interface TriggerPdfValidation {
-  (event: S3CreateEvent): Promise<void>;
+  (event: SQSEvent): Promise<void>;
 }
 
 export const handler: TriggerPdfValidation = async (event) => {
   try {
-    console.log(process?.env);
-    // Access the S3 event data
-    const s3CreateEvent = event.Records[0].s3;
-    console.log({s3CreateEvent});
+  // Access the SQS event data
+  const sqsEvent = event.Records[0].body;
 
     const stepFunctions = new AWS.StepFunctions();
 
     const params = {
       stateMachineArn: process?.env?.PDF_VALIDATION_STATE_MACHINE_ARN || '',
-      input: JSON.stringify({ s3CreateEvent }),
+      input: JSON.stringify({ sqsEvent }),
     };
   
     try {
